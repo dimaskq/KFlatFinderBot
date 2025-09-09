@@ -104,7 +104,7 @@ async def background_parser():
             except Exception as e:
                 await bot.send_message(chat_id=user_id, text=f"Сталася помилка фонового парсингу: {e}")
 
-        await asyncio.sleep(120)  # перевірка кожні 2 хвилини
+        await asyncio.sleep(3600)  # перевірка кожні 2 хвилини
 
 # --- Обробник /start ---
 @dp.message(F.text == "/start")
