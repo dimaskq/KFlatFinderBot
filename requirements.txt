@@ -4,4 +4,4 @@ lxml==4.9.3
 requests==2.32.0
 python-dotenv==1.0.0
 selenium==4.12.0
-chromedriver-autoinstaller==0.7.0
+chromedriver-autoinstaller==0.7.1
