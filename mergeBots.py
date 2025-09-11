@@ -226,7 +226,7 @@ async def background_parser():
 
                 await asyncio.sleep(1)  # pause between messages to avoid flood
 
-        await asyncio.sleep(3600)  # check every 60 minutes
+        await asyncio.sleep(300)  # check every 5 minutes
 
 # --- Handlers ---
 @dp.message(F.text == "/start")
