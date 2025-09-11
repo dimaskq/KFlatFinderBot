@@ -2,7 +2,9 @@ from dotenv import load_dotenv
 import os
 import time
 import asyncio
+import chromedriver_autoinstaller
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -20,12 +22,23 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- Parser for address.bg ---
-def parse_address_bg(url):
+# --- Function to create Chrome driver for container ---
+def create_chrome_driver():
+    # Automatically installs chromedriver
+    chromedriver_autoinstaller.install()
+    
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
-    driver = webdriver.Chrome(options=options)
+    options.add_argument("--no-sandbox")  # required for container
+    options.add_argument("--disable-dev-shm-usage")  # avoid memory issues
+    service = Service()
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
+
+# --- Parser for address.bg ---
+def parse_address_bg(url):
+    driver = create_chrome_driver()
     apartments = []
 
     driver.get(url)
@@ -51,7 +64,6 @@ def parse_address_bg(url):
         except:
             continue
 
-        # Scroll down to load all offers
         SCROLL_PAUSE_TIME = 1
         last_height = driver.execute_script("return document.body.scrollHeight")
         while True:
@@ -86,7 +98,7 @@ def parse_address_bg(url):
                 elif img_elem.get("data-src"):
                     img = img_elem["data-src"]
                 elif img_elem.get("srcset"):
-                    img = img_elem["srcset"].split()[0]
+                    img = img_elem.get("srcset", "").split()[0]
 
             link = link_elem["href"] if link_elem else None
             if not link or not link.startswith("http"):
@@ -168,7 +180,6 @@ async def background_parser():
         for user_id, data in users_data.items():
             all_apartments = []
 
-            # --- Parse address.bg ---
             address_url = data.get("address_url")
             if address_url:
                 try:
@@ -177,7 +188,6 @@ async def background_parser():
                 except Exception as e:
                     await bot.send_message(chat_id=user_id, text=f"[address.bg] Error: {e}")
 
-            # --- Parse imot.bg ---
             imot_url = data.get("imot_url")
             if imot_url:
                 try:
@@ -212,7 +222,7 @@ async def background_parser():
                     else:
                         await bot.send_message(chat_id=user_id, text=caption)
                 except TelegramRetryAfter as e:
-                    await asyncio.sleep(e.timeout)  # wait for server timeout
+                    await asyncio.sleep(e.timeout)
                     if a.get("img"):
                         await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
                     else:
@@ -223,8 +233,7 @@ async def background_parser():
 
                 last_links.add(a["link"])
                 data["last_links"] = last_links
-
-                await asyncio.sleep(1)  # pause between messages to avoid flood
+                await asyncio.sleep(1)  # pause to avoid flood
 
         await asyncio.sleep(3600)  # check every 60 minutes
 
