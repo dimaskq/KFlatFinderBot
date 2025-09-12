@@ -1,4 +1,3 @@
-# mergeBots.py
 from dotenv import load_dotenv
 import os
 import time
@@ -26,18 +25,16 @@ dp = Dispatcher()
 # --- Centralized driver setup ---
 def get_driver():
     options = Options()
-    options.add_argument("--headless")  # headless режим
+    options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1920,1080")
 
-    # Вказуємо бінарник Chrome в контейнері
-    options.binary_location = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
-
-    # Вказуємо chromedriver в контейнері
-    service = Service(executable_path=os.getenv("CHROMEDRIVER_PATH", "/usr/local/bin/chromedriver"))
+    # Захардкоджені шляхи всередині Docker
+    options.binary_location = "/usr/bin/google-chrome"
+    service = Service(executable_path="/usr/local/bin/chromedriver")
 
     try:
         driver = webdriver.Chrome(service=service, options=options)
@@ -66,7 +63,6 @@ def parse_address_bg(url):
     for page in range(1, total_pages + 1):
         page_url = url if page == 1 else f"{url}&page={page}"
         driver.get(page_url)
-
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "div.offer-card"))
@@ -131,7 +127,6 @@ def parse_address_bg(url):
 def parse_imot_bg(url):
     apartments = []
     page = 1
-
     while True:
         if page == 1:
             page_url = url

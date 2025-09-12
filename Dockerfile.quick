@@ -20,7 +20,7 @@ RUN wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/$
     && chmod +x /usr/local/bin/chromedriver
 
 # --- Python залежності ---
-COPY requirements.txt .
+COPY requirements.txt . 
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
