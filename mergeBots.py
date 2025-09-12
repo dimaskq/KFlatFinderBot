@@ -13,6 +13,9 @@ from aiogram.types import Message
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramRetryAfter
 import requests
+import chromedriver_autoinstaller
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import WebDriverException
 
 # --- Load API token ---
 load_dotenv()
@@ -20,12 +23,38 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
+
+# --- Centralized driver setup ---
+def get_driver():
+    options = Options()
+    # recommended args for Docker headless
+    options.add_argument("--headless=new")  # if not working, replace with "--headless"
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--window-size=1920,1080")
+
+    # if CHROME_BIN is set, use it
+    chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
+    if os.path.exists(chrome_bin):
+        options.binary_location = chrome_bin
+
+    # ensure chromedriver is installed
+    driver_path = chromedriver_autoinstaller.install()
+    service = Service(driver_path)
+
+    try:
+        driver = webdriver.Chrome(service=service, options=options)
+    except WebDriverException as e:
+        print("[ERROR] Cannot start Chrome:", e)
+        raise
+    return driver
+
+
 # --- Parser for address.bg ---
 def parse_address_bg(url):
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    driver = webdriver.Chrome(options=options)
+    driver = get_driver()
     apartments = []
 
     driver.get(url)
@@ -105,6 +134,7 @@ def parse_address_bg(url):
     driver.quit()
     return apartments
 
+
 # --- Parser for imot.bg ---
 def parse_imot_bg(url):
     apartments = []
@@ -154,8 +184,10 @@ def parse_imot_bg(url):
 
     return apartments
 
+
 # --- Users data storage ---
 users_data = {}  # {chat_id: {"address_url": "", "imot_url": "", "last_links": set()}}
+
 
 # --- Background parser ---
 async def background_parser():
@@ -212,7 +244,7 @@ async def background_parser():
                     else:
                         await bot.send_message(chat_id=user_id, text=caption)
                 except TelegramRetryAfter as e:
-                    await asyncio.sleep(e.timeout)  # wait for server timeout
+                    await asyncio.sleep(e.timeout)
                     if a.get("img"):
                         await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
                     else:
@@ -224,9 +256,10 @@ async def background_parser():
                 last_links.add(a["link"])
                 data["last_links"] = last_links
 
-                await asyncio.sleep(1)  # pause between messages to avoid flood
+                await asyncio.sleep(1)
 
-        await asyncio.sleep(300)  # check every 5 minutes
+        await asyncio.sleep(300)
+
 
 # --- Handlers ---
 @dp.message(F.text == "/start")
@@ -239,6 +272,7 @@ async def cmd_start(message: Message):
         "`https://www.address.bg/flats?search=sofia https://www.imot.bg/naemi/flats?city=sofia`\n"
         "I will collect all apartments and notify you about new ones automatically 🚀"
     )
+
 
 @dp.message(F.text.startswith("http"))
 async def handle_link(message: Message):
@@ -257,6 +291,7 @@ async def handle_link(message: Message):
         users_data[user_id]["imot_url"] = imot_url
 
     await message.answer("Links accepted ✅. I will now collect all apartments and notify you about new ones automatically.")
+
 
 # --- Start bot ---
 if __name__ == "__main__":
