@@ -33,13 +33,11 @@ def get_driver():
     options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1920,1080")
 
-    # Вказуємо правильний бінарник Chrome у контейнері
-    options.binary_location = "/opt/google/chrome/chrome"
+    # Вказуємо бінарник Chrome в контейнері
+    options.binary_location = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
 
-    # Вказуємо chromedriver із Docker образу
+    # Вказуємо chromedriver в контейнері
     service = Service(executable_path=os.getenv("CHROMEDRIVER_PATH", "/usr/local/bin/chromedriver"))
-
-
 
     try:
         driver = webdriver.Chrome(service=service, options=options)
