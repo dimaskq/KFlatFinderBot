@@ -37,7 +37,8 @@ def get_driver():
     options.binary_location = "/opt/google/chrome/chrome"
 
     # Вказуємо chromedriver із Docker образу
-    service = Service(executable_path="/opt/bin/chromedriver")
+    service = Service(executable_path=os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver"))
+
 
     try:
         driver = webdriver.Chrome(service=service, options=options)

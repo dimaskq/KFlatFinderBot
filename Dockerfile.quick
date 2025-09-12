@@ -9,6 +9,9 @@ COPY . .
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# chrome вже в образі
 ENV CHROME_BIN=/opt/google/chrome/chrome
+# правильний шлях до chromedriver
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 CMD ["python", "mergeBots.py"]
