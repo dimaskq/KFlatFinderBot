@@ -13,7 +13,6 @@ from aiogram.types import Message
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramRetryAfter
 import requests
-import chromedriver_autoinstaller
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import WebDriverException
 
@@ -27,7 +26,7 @@ dp = Dispatcher()
 # --- Centralized driver setup ---
 def get_driver():
     options = Options()
-    # recommended args for Docker headless
+    # Recommended args for Docker headless
     options.add_argument("--headless=new")  # if not working, replace with "--headless"
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -35,14 +34,12 @@ def get_driver():
     options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1920,1080")
 
-    # if CHROME_BIN is set, use it
+    # Chrome already included in selenium/standalone-chrome image
     chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
     if os.path.exists(chrome_bin):
         options.binary_location = chrome_bin
 
-    # ensure chromedriver is installed
-    driver_path = chromedriver_autoinstaller.install()
-    service = Service(driver_path)
+    service = Service()  # standalone-chrome image вже містить chromedriver
 
     try:
         driver = webdriver.Chrome(service=service, options=options)
@@ -80,7 +77,6 @@ def parse_address_bg(url):
         except:
             continue
 
-        # Scroll down to load all offers
         SCROLL_PAUSE_TIME = 1
         last_height = driver.execute_script("return document.body.scrollHeight")
         while True:
@@ -200,7 +196,6 @@ async def background_parser():
         for user_id, data in users_data.items():
             all_apartments = []
 
-            # --- Parse address.bg ---
             address_url = data.get("address_url")
             if address_url:
                 try:
@@ -209,7 +204,6 @@ async def background_parser():
                 except Exception as e:
                     await bot.send_message(chat_id=user_id, text=f"[address.bg] Error: {e}")
 
-            # --- Parse imot.bg ---
             imot_url = data.get("imot_url")
             if imot_url:
                 try:

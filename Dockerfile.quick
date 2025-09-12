@@ -3,14 +3,12 @@ FROM selenium/standalone-chrome:latest
 
 WORKDIR /app
 
-# Копіюємо requirements і ставимо залежності Python
-COPY requirements.txt .
+# copy requirements
+COPY requirements.txt . 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копіюємо код бота
 COPY . .
 
-# Змінні середовища (опціонально)
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
