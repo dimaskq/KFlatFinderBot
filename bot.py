@@ -1,8 +1,9 @@
+# mergeBots.py
 from dotenv import load_dotenv
 import os
 import time
 import asyncio
-from selenium.webdriver import Remote
+from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -13,6 +14,8 @@ from aiogram.types import Message
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramRetryAfter
 import requests
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import WebDriverException
 
 # --- Load API token ---
 load_dotenv()
@@ -20,19 +23,27 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- Remote Selenium driver ---
+# --- Centralized driver setup ---
 def get_driver():
     options = Options()
-    options.add_argument("--headless=new")
+    options.add_argument("--headless")  # headless режим
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1920,1080")
 
-    driver = Remote(
-        command_executor="http://selenium:4444/wd/hub",
-        options=options
-    )
+    # Вказуємо правильний бінарник Chrome у контейнері
+    options.binary_location = "/opt/google/chrome/chrome"
+
+    # Вказуємо chromedriver із Docker образу
+    service = Service(executable_path="/opt/bin/chromedriver")
+
+    try:
+        driver = webdriver.Chrome(service=service, options=options)
+    except WebDriverException as e:
+        print("[ERROR] Cannot start Chrome:", e)
+        raise
     return driver
 
 # --- Parser for address.bg ---
