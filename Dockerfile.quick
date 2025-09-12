@@ -1,7 +1,23 @@
-FROM selenium/standalone-chrome:latest
+FROM python:3.11-slim
 
 WORKDIR /app
 
+# --- Встановлюємо Chrome та chromedriver ---
+RUN apt-get update && apt-get install -y wget gnupg unzip curl \
+    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+# Завантажуємо chromedriver відповідної версії
+RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}') && \
+    CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE") && \
+    wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" && \
+    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \
+    rm /tmp/chromedriver.zip
+
+# --- Python залежності ---
 COPY requirements.txt . 
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -9,9 +25,7 @@ COPY . .
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-# chrome вже в образі
-ENV CHROME_BIN=/opt/google/chrome/chrome
-# правильний шлях до chromedriver
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 
 CMD ["python", "mergeBots.py"]
