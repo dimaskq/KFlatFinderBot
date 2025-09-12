@@ -2,9 +2,7 @@ from dotenv import load_dotenv
 import os
 import time
 import asyncio
-import chromedriver_autoinstaller
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -15,6 +13,8 @@ from aiogram.types import Message
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramRetryAfter
 import requests
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import WebDriverException
 
 # --- Load API token ---
 load_dotenv()
@@ -22,23 +22,36 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- Function to create Chrome driver for container ---
-def create_chrome_driver():
-    # Automatically installs chromedriver
-    chromedriver_autoinstaller.install()
-    
+
+# --- Centralized driver setup ---
+def get_driver():
     options = Options()
-    options.add_argument("--headless")
+    # Recommended args for Docker headless
+    options.add_argument("--headless=new")  # if not working, replace with "--headless"
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")  # required for container
-    options.add_argument("--disable-dev-shm-usage")  # avoid memory issues
-    service = Service()
-    driver = webdriver.Chrome(service=service, options=options)
+    options.add_argument("--disable-extensions")
+    options.add_argument("--window-size=1920,1080")
+
+    # Chrome already included in selenium/standalone-chrome image
+    chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
+    if os.path.exists(chrome_bin):
+        options.binary_location = chrome_bin
+
+    service = Service()  # standalone-chrome image вже містить chromedriver
+
+    try:
+        driver = webdriver.Chrome(service=service, options=options)
+    except WebDriverException as e:
+        print("[ERROR] Cannot start Chrome:", e)
+        raise
     return driver
+
 
 # --- Parser for address.bg ---
 def parse_address_bg(url):
-    driver = create_chrome_driver()
+    driver = get_driver()
     apartments = []
 
     driver.get(url)
@@ -98,7 +111,7 @@ def parse_address_bg(url):
                 elif img_elem.get("data-src"):
                     img = img_elem["data-src"]
                 elif img_elem.get("srcset"):
-                    img = img_elem.get("srcset", "").split()[0]
+                    img = img_elem["srcset"].split()[0]
 
             link = link_elem["href"] if link_elem else None
             if not link or not link.startswith("http"):
@@ -116,6 +129,7 @@ def parse_address_bg(url):
 
     driver.quit()
     return apartments
+
 
 # --- Parser for imot.bg ---
 def parse_imot_bg(url):
@@ -166,8 +180,10 @@ def parse_imot_bg(url):
 
     return apartments
 
+
 # --- Users data storage ---
 users_data = {}  # {chat_id: {"address_url": "", "imot_url": "", "last_links": set()}}
+
 
 # --- Background parser ---
 async def background_parser():
@@ -233,9 +249,11 @@ async def background_parser():
 
                 last_links.add(a["link"])
                 data["last_links"] = last_links
-                await asyncio.sleep(1)  # pause to avoid flood
 
-        await asyncio.sleep(3600)  # check every 60 minutes
+                await asyncio.sleep(1)
+
+        await asyncio.sleep(300)
+
 
 # --- Handlers ---
 @dp.message(F.text == "/start")
@@ -248,6 +266,7 @@ async def cmd_start(message: Message):
         "`https://www.address.bg/flats?search=sofia https://www.imot.bg/naemi/flats?city=sofia`\n"
         "I will collect all apartments and notify you about new ones automatically 🚀"
     )
+
 
 @dp.message(F.text.startswith("http"))
 async def handle_link(message: Message):
@@ -266,6 +285,7 @@ async def handle_link(message: Message):
         users_data[user_id]["imot_url"] = imot_url
 
     await message.answer("Links accepted ✅. I will now collect all apartments and notify you about new ones automatically.")
+
 
 # --- Start bot ---
 if __name__ == "__main__":
