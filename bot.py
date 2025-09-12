@@ -1,3 +1,4 @@
+# mergeBots.py
 from dotenv import load_dotenv
 import os
 import time
@@ -22,24 +23,21 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-
 # --- Centralized driver setup ---
 def get_driver():
     options = Options()
-    # Recommended args for Docker headless
-    options.add_argument("--headless=new")  # if not working, replace with "--headless"
+    options.add_argument("--headless")  # headless режим
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1920,1080")
 
-    # Chrome already included in selenium/standalone-chrome image
-    chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/google-chrome")
-    if os.path.exists(chrome_bin):
-        options.binary_location = chrome_bin
+    # Вказуємо правильний бінарник Chrome у контейнері
+    options.binary_location = "/opt/google/chrome/chrome"
 
-    service = Service()  # standalone-chrome image вже містить chromedriver
+    # Вказуємо chromedriver із Docker образу
+    service = Service(executable_path="/opt/bin/chromedriver")
 
     try:
         driver = webdriver.Chrome(service=service, options=options)
@@ -47,7 +45,6 @@ def get_driver():
         print("[ERROR] Cannot start Chrome:", e)
         raise
     return driver
-
 
 # --- Parser for address.bg ---
 def parse_address_bg(url):
@@ -130,7 +127,6 @@ def parse_address_bg(url):
     driver.quit()
     return apartments
 
-
 # --- Parser for imot.bg ---
 def parse_imot_bg(url):
     apartments = []
@@ -180,10 +176,8 @@ def parse_imot_bg(url):
 
     return apartments
 
-
 # --- Users data storage ---
 users_data = {}  # {chat_id: {"address_url": "", "imot_url": "", "last_links": set()}}
-
 
 # --- Background parser ---
 async def background_parser():
@@ -254,7 +248,6 @@ async def background_parser():
 
         await asyncio.sleep(300)
 
-
 # --- Handlers ---
 @dp.message(F.text == "/start")
 async def cmd_start(message: Message):
@@ -266,7 +259,6 @@ async def cmd_start(message: Message):
         "`https://www.address.bg/flats?search=sofia https://www.imot.bg/naemi/flats?city=sofia`\n"
         "I will collect all apartments and notify you about new ones automatically 🚀"
     )
-
 
 @dp.message(F.text.startswith("http"))
 async def handle_link(message: Message):
@@ -285,7 +277,6 @@ async def handle_link(message: Message):
         users_data[user_id]["imot_url"] = imot_url
 
     await message.answer("Links accepted ✅. I will now collect all apartments and notify you about new ones automatically.")
-
 
 # --- Start bot ---
 if __name__ == "__main__":
