@@ -24,23 +24,15 @@ dp = Dispatcher()
 
 # --- Centralized driver setup ---
 def get_driver():
+    chromedriver_autoinstaller.install()  
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")      
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1920,1080")
 
-    # Захардкоджені шляхи всередині Docker
-    options.binary_location = "/usr/bin/google-chrome"
-    service = Service(executable_path="/usr/local/bin/chromedriver")
-
-    try:
-        driver = webdriver.Chrome(service=service, options=options)
-    except WebDriverException as e:
-        print("[ERROR] Cannot start Chrome:", e)
-        raise
+    driver = webdriver.Chrome(options=options)
     return driver
 
 # --- Parser for address.bg ---
@@ -241,7 +233,7 @@ async def background_parser():
 
                 await asyncio.sleep(1)
 
-        await asyncio.sleep(300)
+        await asyncio.sleep(3600)
 
 # --- Handlers ---
 @dp.message(F.text == "/start")

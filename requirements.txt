@@ -1,7 +1,7 @@
-aiogram==3.6.2
-beautifulsoup4==4.12.2
-lxml==4.9.3
-requests==2.32.0
-python-dotenv==1.0.0
-selenium==4.12.0
+aiogram==3.22.0
+beautifulsoup4==4.12.3
+lxml==5.3.0
+requests==2.32.3
+python-dotenv==1.0.1
+selenium==4.25.0
 chromedriver-autoinstaller==0.6.4
