@@ -1,20 +1,14 @@
 from dotenv import load_dotenv
 import os
-import time
 import asyncio
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+import html
 from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramRetryAfter
 import requests
-from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import WebDriverException
+from playwright.async_api import async_playwright
 
 # --- Load API token ---
 load_dotenv()
@@ -22,97 +16,81 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- Centralized driver setup ---
-def get_driver():
-    chromedriver_autoinstaller.install()  
-    options = Options()
-    options.add_argument("--headless=new")      
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-
-    driver = webdriver.Chrome(options=options)
-    return driver
-
-# --- Parser for address.bg ---
-def parse_address_bg(url):
-    driver = get_driver()
+# --- Parser for address.bg using Playwright ---
+async def parse_address_bg(url):
     apartments = []
-
-    driver.get(url)
-    try:
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "h3.offer-title"))
-        )
-    except:
-        driver.quit()
-        return apartments
-
-    pagination = driver.find_elements(By.CSS_SELECTOR, "li.pagination-page-nav")
-    total_pages = max(1, len(pagination))
-
-    for page in range(1, total_pages + 1):
-        page_url = url if page == 1 else f"{url}&page={page}"
-        driver.get(page_url)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(url)
         try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.offer-card"))
-            )
+            await page.wait_for_selector("h3.offer-title", timeout=15000)
         except:
-            continue
+            await browser.close()
+            return apartments
 
-        SCROLL_PAUSE_TIME = 1
-        last_height = driver.execute_script("return document.body.scrollHeight")
-        while True:
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(SCROLL_PAUSE_TIME)
-            new_height = driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
-                break
-            last_height = new_height
+        pagination = await page.query_selector_all("li.pagination-page-nav")
+        total_pages = max(1, len(pagination))
 
-        soup = BeautifulSoup(driver.page_source, "lxml")
-        cards = soup.select("div.offer-card")
-
-        for card in cards:
-            title_elem = card.select_one("h3.offer-title")
-            link_elem = card.select_one("a[href]")
-            img_elem = card.select_one("div.img picture img")
-            size_elem = card.select_one("div.right small.gray-d")
-            type_elem = card.select_one("div.right small.gray-m")
-            price_elem = card.select_one("div.left small.price span")
-
-            if price_elem and price_elem.text.strip():
-                price = price_elem.text.strip() + " €"
-            else:
-                price_small = card.select_one("div.left small.price")
-                price = price_small.text.strip() + " €" if price_small else "No price"
-
-            img = None
-            if img_elem:
-                if img_elem.get("src"):
-                    img = img_elem["src"]
-                elif img_elem.get("data-src"):
-                    img = img_elem["data-src"]
-                elif img_elem.get("srcset"):
-                    img = img_elem["srcset"].split()[0]
-
-            link = link_elem["href"] if link_elem else None
-            if not link or not link.startswith("http"):
+        for page_num in range(1, total_pages + 1):
+            page_url = url if page_num == 1 else f"{url}&page={page_num}"
+            await page.goto(page_url)
+            try:
+                await page.wait_for_selector("div.offer-card", timeout=10000)
+            except:
                 continue
 
-            apartments.append({
-                "title": title_elem.text.strip() if title_elem else "No title",
-                "price": price,
-                "link": link,
-                "img": img,
-                "size": size_elem.text.strip() if size_elem else "",
-                "type": type_elem.text.strip() if type_elem else "",
-                "source": "address.bg"
-            })
+            previous_height = 0
+            while True:
+                height = await page.evaluate("document.body.scrollHeight")
+                if height == previous_height:
+                    break
+                previous_height = height
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await asyncio.sleep(1)
 
-    driver.quit()
+            content = await page.content()
+            soup = BeautifulSoup(content, "lxml")
+            cards = soup.select("div.offer-card")
+
+            for card in cards:
+                title_elem = card.select_one("h3.offer-title")
+                link_elem = card.select_one("a[href]")
+                img_elem = card.select_one("div.img picture img")
+                size_elem = card.select_one("div.right small.gray-d")
+                type_elem = card.select_one("div.right small.gray-m")
+                price_elem = card.select_one("div.left small.price span")
+
+                if price_elem and price_elem.text.strip():
+                    price = price_elem.text.strip() + " €"
+                else:
+                    price_small = card.select_one("div.left small.price")
+                    price = price_small.text.strip() + " €" if price_small else "No price"
+
+                img = None
+                if img_elem:
+                    if img_elem.get("src"):
+                        img = img_elem["src"]
+                    elif img_elem.get("data-src"):
+                        img = img_elem["data-src"]
+                    elif img_elem.get("srcset"):
+                        img = img_elem["srcset"].split()[0]
+
+                link = link_elem["href"] if link_elem else None
+                if not link or not link.startswith("http"):
+                    continue
+
+                apartments.append({
+                    "title": title_elem.text.strip() if title_elem else "No title",
+                    "price": price,
+                    "link": link,
+                    "img": img,
+                    "size": size_elem.text.strip() if size_elem else "",
+                    "type": type_elem.text.strip() if type_elem else "",
+                    "source": "address.bg"
+                })
+
+        await browser.close()
     return apartments
 
 # --- Parser for imot.bg ---
@@ -166,74 +144,70 @@ def parse_imot_bg(url):
 # --- Users data storage ---
 users_data = {}  # {chat_id: {"address_url": "", "imot_url": "", "last_links": set()}}
 
-# --- Background parser ---
-async def background_parser():
-    print("[DEBUG] Background parser started")
+# --- Process single user asynchronously ---
+async def process_user(user_id, data):
+    all_apartments = []
+
+    address_url = data.get("address_url")
+    if address_url:
+        try:
+            apartments_address = await parse_address_bg(address_url)
+            all_apartments.extend(apartments_address)
+        except Exception as e:
+            await bot.send_message(chat_id=user_id, text=f"[address.bg] Error: {html.escape(str(e))}")
+
+    imot_url = data.get("imot_url")
+    if imot_url:
+        try:
+            apartments_imot = await asyncio.to_thread(parse_imot_bg, imot_url)
+            all_apartments.extend(apartments_imot)
+        except Exception as e:
+            await bot.send_message(chat_id=user_id, text=f"[imot.bg] Error: {html.escape(str(e))}")
+
+    last_links = data.get("last_links", set())
+    new_apartments = [a for a in all_apartments if a["link"] not in last_links]
+
+    total_found = len(all_apartments)
+    new_count = len(new_apartments)
+    await bot.send_message(chat_id=user_id, text=f"Total apartments found: {total_found}, new: {new_count}")
+
+    for a in new_apartments:
+        caption = f"<b>{html.escape(a.get('title', 'No title'))}</b>\n"
+        caption += f"<b>Price:</b> {html.escape(a.get('price', 'No price'))}\n"
+        if a['source'] == "address.bg":
+            caption += f"<b>Type:</b> {html.escape(a.get('type', ''))}\n<b>Size:</b> {html.escape(a.get('size', ''))}\n"
+        else:
+            caption += f"<b>Seller:</b> {html.escape(a.get('seller', 'Unknown'))}\n"
+            caption += f"<b>Details:</b> <i>{html.escape(a.get('info', '')[:300])}...</i>\n"
+        caption += f"<a href='{html.escape(a.get('link'))}'>View listing</a>"
+
+        try:
+            if a.get("img"):
+                await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
+            else:
+                await bot.send_message(chat_id=user_id, text=caption)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.timeout)
+            if a.get("img"):
+                await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
+            else:
+                await bot.send_message(chat_id=user_id, text=caption)
+        except Exception as e:
+            print(f"Failed to send message/photo: {e}")
+            await bot.send_message(chat_id=user_id, text=caption)
+
+        last_links.add(a["link"])
+        data["last_links"] = last_links
+        await asyncio.sleep(1)
+
+# --- Background parser for a single user ---
+async def user_parser(user_id):
     while True:
-        if not users_data:
-            await asyncio.sleep(5)
-            continue
-
-        for user_id, data in users_data.items():
-            all_apartments = []
-
-            address_url = data.get("address_url")
-            if address_url:
-                try:
-                    apartments_address = await asyncio.to_thread(parse_address_bg, address_url)
-                    all_apartments.extend(apartments_address)
-                except Exception as e:
-                    await bot.send_message(chat_id=user_id, text=f"[address.bg] Error: {e}")
-
-            imot_url = data.get("imot_url")
-            if imot_url:
-                try:
-                    apartments_imot = await asyncio.to_thread(parse_imot_bg, imot_url)
-                    all_apartments.extend(apartments_imot)
-                except Exception as e:
-                    await bot.send_message(chat_id=user_id, text=f"[imot.bg] Error: {e}")
-
-            last_links = data.get("last_links", set())
-            new_apartments = [a for a in all_apartments if a["link"] not in last_links]
-
-            total_found = len(all_apartments)
-            new_count = len(new_apartments)
-            await bot.send_message(chat_id=user_id, text=f"Total apartments found: {total_found}, new: {new_count}")
-
-            for a in new_apartments:
-                caption = f"<b>{a.get('title')}</b>\n"
-                caption += f"<b>Price:</b> {a.get('price', 'No price')}\n"
-
-                if a['source'] == "address.bg":
-                    caption += f"<b>Type:</b> {a.get('type', '')}\n"
-                    caption += f"<b>Size:</b> {a.get('size', '')}\n"
-                else:
-                    caption += f"<b>Seller:</b> {a.get('seller', 'Unknown')}\n"
-                    caption += f"<b>Details:</b> <i>{a.get('info', '')[:300]}...</i>\n"
-
-                caption += f"<a href='{a.get('link')}'>View listing</a>"
-
-                try:
-                    if a.get("img"):
-                        await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
-                    else:
-                        await bot.send_message(chat_id=user_id, text=caption)
-                except TelegramRetryAfter as e:
-                    await asyncio.sleep(e.timeout)
-                    if a.get("img"):
-                        await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
-                    else:
-                        await bot.send_message(chat_id=user_id, text=caption)
-                except Exception as e:
-                    print(f"Failed to send message/photo: {e}")
-                    await bot.send_message(chat_id=user_id, text=caption)
-
-                last_links.add(a["link"])
-                data["last_links"] = last_links
-
-                await asyncio.sleep(1)
-
-        await asyncio.sleep(3600)
+        data = users_data.get(user_id)
+        if not data:
+            break
+        await process_user(user_id, data)
+        await asyncio.sleep(3600)  # интервал между проверками
 
 # --- Handlers ---
 @dp.message(F.text == "/start")
@@ -259,6 +233,8 @@ async def handle_link(message: Message):
 
     if user_id not in users_data:
         users_data[user_id] = {"address_url": address_url, "imot_url": imot_url, "last_links": set()}
+        # создаём отдельную задачу для этого пользователя
+        asyncio.create_task(user_parser(user_id))
     else:
         users_data[user_id]["address_url"] = address_url
         users_data[user_id]["imot_url"] = imot_url
@@ -268,7 +244,6 @@ async def handle_link(message: Message):
 # --- Start bot ---
 if __name__ == "__main__":
     async def main():
-        asyncio.create_task(background_parser())
         await dp.start_polling(bot)
 
     asyncio.run(main())
