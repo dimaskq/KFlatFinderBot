@@ -8,7 +8,12 @@ from aiogram.types import Message
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramRetryAfter
 import requests
-from playwright.async_api import async_playwright
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+import chromedriver_autoinstaller
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # --- Load API token ---
 load_dotenv()
@@ -16,81 +21,91 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- Parser for address.bg using Playwright ---
-async def parse_address_bg(url):
+# --- Setup Chrome ---
+chromedriver_autoinstaller.install()
+
+def get_chrome_driver():
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    return webdriver.Chrome(options=options)
+
+# --- Parser for address.bg using Selenium ---
+def parse_address_bg(url):
     apartments = []
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        await page.goto(url)
+    driver = get_chrome_driver()
+    driver.get(url)
+
+    try:
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "h3.offer-title")))
+    except:
+        driver.quit()
+        return apartments
+
+    pagination = driver.find_elements(By.CSS_SELECTOR, "li.pagination-page-nav")
+    total_pages = max(1, len(pagination))
+
+    for page_num in range(1, total_pages + 1):
+        page_url = url if page_num == 1 else f"{url}&page={page_num}"
+        driver.get(page_url)
+
         try:
-            await page.wait_for_selector("h3.offer-title", timeout=15000)
+            WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.offer-card")))
         except:
-            await browser.close()
-            return apartments
+            continue
 
-        pagination = await page.query_selector_all("li.pagination-page-nav")
-        total_pages = max(1, len(pagination))
+        last_height = driver.execute_script("return document.body.scrollHeight")
+        while True:
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            asyncio.sleep(1)
+            new_height = driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
 
-        for page_num in range(1, total_pages + 1):
-            page_url = url if page_num == 1 else f"{url}&page={page_num}"
-            await page.goto(page_url)
-            try:
-                await page.wait_for_selector("div.offer-card", timeout=10000)
-            except:
+        soup = BeautifulSoup(driver.page_source, "lxml")
+        cards = soup.select("div.offer-card")
+
+        for card in cards:
+            title_elem = card.select_one("h3.offer-title")
+            link_elem = card.select_one("a[href]")
+            img_elem = card.select_one("div.img picture img")
+            size_elem = card.select_one("div.right small.gray-d")
+            type_elem = card.select_one("div.right small.gray-m")
+            price_elem = card.select_one("div.left small.price span")
+
+            if price_elem and price_elem.text.strip():
+                price = price_elem.text.strip() + " €"
+            else:
+                price_small = card.select_one("div.left small.price")
+                price = price_small.text.strip() + " €" if price_small else "No price"
+
+            img = None
+            if img_elem:
+                if img_elem.get("src"):
+                    img = img_elem["src"]
+                elif img_elem.get("data-src"):
+                    img = img_elem.get("data-src")
+                elif img_elem.get("srcset"):
+                    img = img_elem.get("srcset").split()[0]
+
+            link = link_elem["href"] if link_elem else None
+            if not link or not link.startswith("http"):
                 continue
 
-            previous_height = 0
-            while True:
-                height = await page.evaluate("document.body.scrollHeight")
-                if height == previous_height:
-                    break
-                previous_height = height
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await asyncio.sleep(1)
+            apartments.append({
+                "title": title_elem.text.strip() if title_elem else "No title",
+                "price": price,
+                "link": link,
+                "img": img,
+                "size": size_elem.text.strip() if size_elem else "",
+                "type": type_elem.text.strip() if type_elem else "",
+                "source": "address.bg"
+            })
 
-            content = await page.content()
-            soup = BeautifulSoup(content, "lxml")
-            cards = soup.select("div.offer-card")
-
-            for card in cards:
-                title_elem = card.select_one("h3.offer-title")
-                link_elem = card.select_one("a[href]")
-                img_elem = card.select_one("div.img picture img")
-                size_elem = card.select_one("div.right small.gray-d")
-                type_elem = card.select_one("div.right small.gray-m")
-                price_elem = card.select_one("div.left small.price span")
-
-                if price_elem and price_elem.text.strip():
-                    price = price_elem.text.strip() + " €"
-                else:
-                    price_small = card.select_one("div.left small.price")
-                    price = price_small.text.strip() + " €" if price_small else "No price"
-
-                img = None
-                if img_elem:
-                    if img_elem.get("src"):
-                        img = img_elem["src"]
-                    elif img_elem.get("data-src"):
-                        img = img_elem["data-src"]
-                    elif img_elem.get("srcset"):
-                        img = img_elem["srcset"].split()[0]
-
-                link = link_elem["href"] if link_elem else None
-                if not link or not link.startswith("http"):
-                    continue
-
-                apartments.append({
-                    "title": title_elem.text.strip() if title_elem else "No title",
-                    "price": price,
-                    "link": link,
-                    "img": img,
-                    "size": size_elem.text.strip() if size_elem else "",
-                    "type": type_elem.text.strip() if type_elem else "",
-                    "source": "address.bg"
-                })
-
-        await browser.close()
+    driver.quit()
     return apartments
 
 # --- Parser for imot.bg ---
@@ -151,7 +166,7 @@ async def process_user(user_id, data):
     address_url = data.get("address_url")
     if address_url:
         try:
-            apartments_address = await parse_address_bg(address_url)
+            apartments_address = await asyncio.to_thread(parse_address_bg, address_url)
             all_apartments.extend(apartments_address)
         except Exception as e:
             await bot.send_message(chat_id=user_id, text=f"[address.bg] Error: {html.escape(str(e))}")
@@ -207,7 +222,7 @@ async def user_parser(user_id):
         if not data:
             break
         await process_user(user_id, data)
-        await asyncio.sleep(3600)  # интервал между проверками
+        await asyncio.sleep(3600)  
 
 # --- Handlers ---
 @dp.message(F.text == "/start")
@@ -233,7 +248,6 @@ async def handle_link(message: Message):
 
     if user_id not in users_data:
         users_data[user_id] = {"address_url": address_url, "imot_url": imot_url, "last_links": set()}
-        # создаём отдельную задачу для этого пользователя
         asyncio.create_task(user_parser(user_id))
     else:
         users_data[user_id]["address_url"] = address_url
