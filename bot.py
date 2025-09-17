@@ -1,19 +1,21 @@
 from dotenv import load_dotenv
 import os
+import time
 import asyncio
-import html
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.exceptions import TelegramRetryAfter
 import requests
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import WebDriverException
 import chromedriver_autoinstaller
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # --- Load API token ---
 load_dotenv()
@@ -21,25 +23,29 @@ API_TOKEN = os.getenv("API_TOKEN")
 bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# --- Setup Chrome ---
-chromedriver_autoinstaller.install()
-
-def get_chrome_driver():
+# --- Centralized driver setup ---
+def get_driver():
+    chromedriver_autoinstaller.install()  
     options = Options()
-    options.add_argument("--headless=new")
+    options.add_argument("--headless=new")      
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    return webdriver.Chrome(options=options)
+    options.add_argument("--window-size=1920,1080")
 
-# --- Parser for address.bg using Selenium ---
+    driver = webdriver.Chrome(options=options)
+    return driver
+
+# --- Parser for address.bg ---
 def parse_address_bg(url):
+    driver = get_driver()
     apartments = []
-    driver = get_chrome_driver()
-    driver.get(url)
 
+    driver.get(url)
     try:
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, "h3.offer-title")))
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "h3.offer-title"))
+        )
     except:
         driver.quit()
         return apartments
@@ -47,19 +53,21 @@ def parse_address_bg(url):
     pagination = driver.find_elements(By.CSS_SELECTOR, "li.pagination-page-nav")
     total_pages = max(1, len(pagination))
 
-    for page_num in range(1, total_pages + 1):
-        page_url = url if page_num == 1 else f"{url}&page={page_num}"
+    for page in range(1, total_pages + 1):
+        page_url = url if page == 1 else f"{url}&page={page}"
         driver.get(page_url)
-
         try:
-            WebDriverWait(driver, 10).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.offer-card")))
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "div.offer-card"))
+            )
         except:
             continue
 
+        SCROLL_PAUSE_TIME = 1
         last_height = driver.execute_script("return document.body.scrollHeight")
         while True:
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            asyncio.sleep(1)
+            time.sleep(SCROLL_PAUSE_TIME)
             new_height = driver.execute_script("return document.body.scrollHeight")
             if new_height == last_height:
                 break
@@ -87,7 +95,7 @@ def parse_address_bg(url):
                 if img_elem.get("src"):
                     img = img_elem["src"]
                 elif img_elem.get("data-src"):
-                    img = img_elem.get("data-src")
+                    img = img_elem["data-src"]
                 elif img_elem.get("srcset"):
                     img = img_elem.get("srcset").split()[0]
 
@@ -158,71 +166,68 @@ def parse_imot_bg(url):
 
 # --- Users data storage ---
 users_data = {}  # {chat_id: {"address_url": "", "imot_url": "", "last_links": set()}}
+user_tasks = {}  # {chat_id: asyncio.Task}
 
-# --- Process single user asynchronously ---
-async def process_user(user_id, data):
-    all_apartments = []
+# --- Individual user parser ---
+async def user_parser(user_id: int):
+    while user_id in users_data:
+        data = users_data[user_id]
+        all_apartments = []
 
-    address_url = data.get("address_url")
-    if address_url:
-        try:
-            apartments_address = await asyncio.to_thread(parse_address_bg, address_url)
-            all_apartments.extend(apartments_address)
-        except Exception as e:
-            await bot.send_message(chat_id=user_id, text=f"[address.bg] Error: {html.escape(str(e))}")
+        address_url = data.get("address_url")
+        if address_url:
+            try:
+                apartments_address = await asyncio.to_thread(parse_address_bg, address_url)
+                all_apartments.extend(apartments_address)
+            except Exception as e:
+                await bot.send_message(chat_id=user_id, text=f"[address.bg] Error: {e}")
 
-    imot_url = data.get("imot_url")
-    if imot_url:
-        try:
-            apartments_imot = await asyncio.to_thread(parse_imot_bg, imot_url)
-            all_apartments.extend(apartments_imot)
-        except Exception as e:
-            await bot.send_message(chat_id=user_id, text=f"[imot.bg] Error: {html.escape(str(e))}")
+        imot_url = data.get("imot_url")
+        if imot_url:
+            try:
+                apartments_imot = await asyncio.to_thread(parse_imot_bg, imot_url)
+                all_apartments.extend(apartments_imot)
+            except Exception as e:
+                await bot.send_message(chat_id=user_id, text=f"[imot.bg] Error: {e}")
 
-    last_links = data.get("last_links", set())
-    new_apartments = [a for a in all_apartments if a["link"] not in last_links]
+        last_links = data.get("last_links", set())
+        new_apartments = [a for a in all_apartments if a["link"] not in last_links]
 
-    total_found = len(all_apartments)
-    new_count = len(new_apartments)
-    await bot.send_message(chat_id=user_id, text=f"Total apartments found: {total_found}, new: {new_count}")
+        total_found = len(all_apartments)
+        new_count = len(new_apartments)
+        await bot.send_message(chat_id=user_id, text=f"Total apartments found: {total_found}, new: {new_count}")
 
-    for a in new_apartments:
-        caption = f"<b>{html.escape(a.get('title', 'No title'))}</b>\n"
-        caption += f"<b>Price:</b> {html.escape(a.get('price', 'No price'))}\n"
-        if a['source'] == "address.bg":
-            caption += f"<b>Type:</b> {html.escape(a.get('type', ''))}\n<b>Size:</b> {html.escape(a.get('size', ''))}\n"
-        else:
-            caption += f"<b>Seller:</b> {html.escape(a.get('seller', 'Unknown'))}\n"
-            caption += f"<b>Details:</b> <i>{html.escape(a.get('info', '')[:300])}...</i>\n"
-        caption += f"<a href='{html.escape(a.get('link'))}'>View listing</a>"
-
-        try:
-            if a.get("img"):
-                await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
+        for a in new_apartments:
+            caption = f"<b>{a.get('title')}</b>\n"
+            caption += f"<b>Price:</b> {a.get('price', 'No price')}\n"
+            if a['source'] == "address.bg":
+                caption += f"<b>Type:</b> {a.get('type', '')}\n"
+                caption += f"<b>Size:</b> {a.get('size', '')}\n"
             else:
-                await bot.send_message(chat_id=user_id, text=caption)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.timeout)
-            if a.get("img"):
-                await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
-            else:
-                await bot.send_message(chat_id=user_id, text=caption)
-        except Exception as e:
-            print(f"Failed to send message/photo: {e}")
-            await bot.send_message(chat_id=user_id, text=caption)
+                caption += f"<b>Seller:</b> {a.get('seller', 'Unknown')}\n"
+                caption += f"<b>Details:</b> <i>{a.get('info', '')[:300]}...</i>\n"
+            caption += f"<a href='{a.get('link')}'>View listing</a>"
 
-        last_links.add(a["link"])
-        data["last_links"] = last_links
-        await asyncio.sleep(1)
+            try:
+                if a.get("img"):
+                    await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
+                else:
+                    await bot.send_message(chat_id=user_id, text=caption)
+            except TelegramRetryAfter as e:
+                await asyncio.sleep(e.timeout)
+                if a.get("img"):
+                    await bot.send_photo(chat_id=user_id, photo=a["img"], caption=caption)
+                else:
+                    await bot.send_message(chat_id=user_id, text=caption)
+            except Exception as e:
+                print(f"Failed to send message/photo: {e}")
+                await bot.send_message(chat_id=user_id, text=caption)
 
-# --- Background parser for a single user ---
-async def user_parser(user_id):
-    while True:
-        data = users_data.get(user_id)
-        if not data:
-            break
-        await process_user(user_id, data)
-        await asyncio.sleep(3600)  
+            last_links.add(a["link"])
+            data["last_links"] = last_links
+            await asyncio.sleep(1)
+
+        await asyncio.sleep(3600)  # пауза перед следующим обновлением
 
 # --- Handlers ---
 @dp.message(F.text == "/start")
@@ -246,12 +251,14 @@ async def handle_link(message: Message):
     address_url, imot_url = urls
     user_id = message.from_user.id
 
-    if user_id not in users_data:
-        users_data[user_id] = {"address_url": address_url, "imot_url": imot_url, "last_links": set()}
-        asyncio.create_task(user_parser(user_id))
-    else:
-        users_data[user_id]["address_url"] = address_url
-        users_data[user_id]["imot_url"] = imot_url
+    users_data[user_id] = {"address_url": address_url, "imot_url": imot_url, "last_links": set()}
+
+    # Cancel previous task if exists
+    if user_id in user_tasks:
+        user_tasks[user_id].cancel()
+
+    # Create a new parser task for this user
+    user_tasks[user_id] = asyncio.create_task(user_parser(user_id))
 
     await message.answer("Links accepted ✅. I will now collect all apartments and notify you about new ones automatically.")
 
